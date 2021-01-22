@@ -12,10 +12,6 @@ function waitForReady() {
   return new Promise(resolve => bot.on('ready', resolve));
 }
 
-function waitForStream(stream) {
-  return new Promise(resolve => stream.on('close', resolve));
-}
-
 /**
  * @param {Discord.Message} message
  */
@@ -44,7 +40,6 @@ async function recordAudio(message, outputFolder) {
   const outputPath = `${outputFolder}/audio.wav`;
 
   const connection = await message.member.voice.channel.join();
-  message.reply('recording for ten seconds ...');
   setTimeout(() => {
     message.member.voice.channel.leave();
   }, 1000 * 10);
@@ -59,7 +54,12 @@ async function recordAudio(message, outputFolder) {
   connection.on('reconnecting', console.log);
   connection.on('warn', console.log);
 
+  message.reply('recording for ten seconds ...');
   const audioStream = connection.receiver.createStream(message.member.user, { mode: 'pcm', end: 'manual' });
+  audioStream.on('data', chunk => {
+    console.log(`Received ${chunk.length} bytes of data.`);
+  });
+
   const out = fs.createWriteStream(outputPath);
   ffmpeg(audioStream)
     .inputFormat('s32le')
@@ -69,10 +69,13 @@ async function recordAudio(message, outputFolder) {
     .format('wav')
     .on('error', console.error.bind(console))
     .pipe(out);
-  await waitForStream(out);
+
+  await new Promise(resolve => connection.on('closing', resolve));
+  console.log('waited')
 
   const textCandidates = await speechToText(outputPath);
   fs.writeFileSync(`${outputFolder}/text.json`, JSON.stringify(textCandidates, null, 2));
+  message.reply(textCandidates.text);
 }
 
 async function speechToText(filename) {
@@ -116,6 +119,7 @@ async function speechToText(filename) {
 }
 
 async function main() {
+  // console.log(await speechToText('recordings/2020-05-01 00-05-54/audio.wav'));
   bot.login(process.env.TOKEN);
   await waitForReady();
   console.log('ready');
@@ -123,7 +127,6 @@ async function main() {
   let isRecording = false;
   bot.on('message', message => {
     if (message.content.trim() === 'record') {
-      // TODO: begin recording when a AOE game ends.
       if (isRecording) return;
 
       const date = new Date().toISOString().replace(/T/, ' ').replace(/\..+/, '').replace(/:+/g, '-');
